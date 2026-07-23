@@ -2596,3 +2596,18 @@
     </script>
   </body>
 </html>
+
+
+
+
+list_envolvidos = {}
+
+   for tr in  table3.find_all('tr'):
+    tds = tr.find_all('td')
+
+   if len(tds)>=2:
+    papel = table3.find_all('td')[0].get_text(strip=True)
+    nome = table3.find('b').get_text(strip=True)
+    list_envolvidos[papel] = nome 
+    
+    print( list_envolvidos)
