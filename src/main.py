@@ -1,4 +1,5 @@
 import requests
+import json
 from bs4 import BeautifulSoup
 
 
@@ -70,77 +71,83 @@ def obter_nome_envolvidos(tr):
 
 def obter_data_movimentacoes(tr):
     data = tr.find('a')
-
-    return data.text.strip()
+    #print(data)
+    if data is None: 
+      dt = '' 
+    else: 
+      dt = data.text.strip()
+  
+    return dt     
 
 
 def obter_texto_movimentacoes(tr):
     texto = tr.find_all('td')[1]
 
-    return texto.text.strip()[3:]
+    return texto.text.strip()
+
+with open('processos.jsonl', 'w', encoding='utf-8') as arquivo:
+  for processo in processos:
+
+      objectBS4 = obter_por_nr_processo(processo)
+
+      tables = objectBS4.find_all('table')
+
+      table1 = tables[0]
+      table3 = tables[2]
+
+      body = objectBS4.find('body')
+
+      nr_processo = obter_processo(body)
+
+      dt_autuado = obter_dt_autuado(table1)
+
+      envolvidos = []
+      
+
+      for tr in table3.find_all('tr'):
+
+          papel = obter_papel_envolvidos(tr)
+
+          nome = obter_nome_envolvidos(tr)
+
+          if papel == "RELATOR":
+
+              nome = nome.split(':', 1)[1].strip()
+
+              envolvidos.append(nome)
+
+          else:
+
+              envolvidos.append({
+                  papel: nome
+              })
 
 
-for processo in processos:
+      list_movimentacoes = []
 
-    objectBS4 = obter_por_nr_processo(processo)
+      for table in tables[5:]:
+          
+          coTrs = table.find_all('tr')
+            
+          data = obter_data_movimentacoes(coTrs[0])
+          texto = ''
+          for tr in coTrs[1:]:
+            texto += obter_texto_movimentacoes(tr) + ' '
 
-    tables = objectBS4.find_all('table')
-
-    table1 = tables[0]
-    table3 = tables[2]
-
-    body = objectBS4.find('body')
-
-    nr_processo = obter_processo(body)
-
-    dt_autuado = obter_dt_autuado(table1)
-
-    envolvidos = []
-    
-
-    for tr in table3.find_all('tr'):
-
-        papel = obter_papel_envolvidos(tr)
-
-        nome = obter_nome_envolvidos(tr)
-
-        if papel == "RELATOR":
-
-            nome = nome.split(':', 1)[1].strip()
-
-            envolvidos.append(nome)
-
-        else:
-
-            envolvidos.append({
-                papel: nome
+          if data != '':
+            list_movimentacoes.append({
+                'data': data.replace('Em ', ''),
+                'texto': texto
             })
 
 
-    list_movimentacoes = []
+      dados_processo = {        
 
-    for table in tables[4:]:
-
-        for tr in table.find_all('tr'):
-
-            tds = tr.find_all('td')
-
-            link = tr.find('a')
-
-            if len(tds) >= 2 and link:
-
-                data = obter_data_movimentacoes(tr)
-
-                texto = obter_texto_movimentacoes(tr)
-
-                list_movimentacoes.append({
-                    'data': data,
-                    'texto': texto
-                })
-
-
-    print('Processo:', nr_processo)
-    print('Data de autuação:', dt_autuado)
-    print('Envolvidos:', envolvidos)
-    print('Movimentações:', list_movimentacoes)
-    print('--------------------------------')
+      'Processo': nr_processo,
+      'Data de autuação': dt_autuado,
+      'Envolvidos': envolvidos,
+      'Movimentações': list_movimentacoes
+      }
+      arquivo.write(
+         json.dumps(dados_processo, ensure_ascii=False) + '\n' # type: ignore
+      )
