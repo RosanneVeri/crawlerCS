@@ -1,7 +1,9 @@
+
 import requests
 import json
 from bs4 import BeautifulSoup
 
+CNPJ = "34.020.354/0001-10"
 
 processos = [
     '0000881-39.2016.4.05.0000',
@@ -9,145 +11,202 @@ processos = [
     '0000007-41.2011.4.05.8403',
     '0009865-80.2014.4.05.0000',
     '0014481-40.2010.4.05.0000',
-    '0005037-07.2013.4.05.8300'
+    '0005037-07.2013.4.05.8300',
+    '0007575-16.2003.4.05.8201'
 ]
 
 
 def obter_por_nr_processo(nr_processo):
     url = "https://www5.trf5.jus.br/cp/cp.do"
 
-    session = requests.session()
-
-    session = session.post(
+    response = requests.post(
         url,
         data={
             'tipo': 'xmlproc',
             'filtro': nr_processo
-        }
+        },
+        timeout=30
     )
 
-    return BeautifulSoup(session.content, 'html.parser')
+    response.raise_for_status()
+
+    return BeautifulSoup(response.content, 'html.parser')
 
 
-def obter_por_cpf_cnpj(nr_cnpj):
+def obter_por_cpf_cnpj(cnpj):
     url = "https://www5.trf5.jus.br/cp/"
 
-    session = requests.session()
-
-    session = session.post(
+    response = requests.post(
         url,
         data={
-            'tipo': 'xmlcpf',
-            'filtro': nr_cnpj
-        }
+            'tipo': 'tipo_xmlcpf',
+            'filtro': cnpj
+        },
+        timeout=30
     )
 
-    return BeautifulSoup(session.content, 'html.parser')
+    response.raise_for_status()
+
+    return BeautifulSoup(response.content, 'html.parser')
 
 
 def obter_dt_autuado(table):
-    dt = table.find_all('td')[1].text
+    tds = table.find_all('td')
 
-    return dt[11:].strip()
+    if len(tds) < 2:
+        return ''
+
+    return tds[1].get_text(strip=True)[11:]
 
 
 def obter_processo(body):
-    processo = body.find('body').find_all('p')[1]
+    paragrafos = body.find_all('p')
 
-    return processo.text.strip()[12:]
+    if len(paragrafos) < 2:
+        return ''
 
+    return paragrafos[1].get_text(strip=True)[12:]
+
+def obter_nr_legado(body):
+    paragrafos = body.find_all('p')
+
+    if len(paragrafos) > 2:
+        return paragrafos[2].get_text(strip=True).strip('()')
+
+    return ""
 
 def obter_papel_envolvidos(tr):
-    papel = tr.find_all('td')[0]
+    tds = tr.find_all('td')
 
-    return papel.text.strip()
+    if not tds:
+        return ''
+
+    return tds[0].get_text(strip=True)
 
 
 def obter_nome_envolvidos(tr):
     nome = tr.find('b')
 
-    return nome.text.strip()
+    if nome is None:
+        return ''
+
+    return nome.get_text(strip=True)
 
 
 def obter_data_movimentacoes(tr):
     data = tr.find('a')
-    #print(data)
-    if data is None: 
-      dt = '' 
-    else: 
-      dt = data.text.strip()
-  
-    return dt     
+
+    if data is None:
+        return ''
+
+    return data.get_text(strip=True)
 
 
 def obter_texto_movimentacoes(tr):
-    texto = tr.find_all('td')[1]
+    tds = tr.find_all('td')
 
-    return texto.text.strip()
+    if len(tds) < 2:
+        return ''
 
+    return tds[1].get_text(strip=True)
+
+
+# Grava os processos no arquivo JSONL
 with open('processos.jsonl', 'w', encoding='utf-8') as arquivo:
-  for processo in processos:
 
-      objectBS4 = obter_por_nr_processo(processo)
+    for processo in processos:
 
-      tables = objectBS4.find_all('table')
+        try:
+            print(f'\nConsultando processo: {processo}')
 
-      table1 = tables[0]
-      table3 = tables[2]
+            objectBS4 = obter_por_nr_processo(processo)
 
-      body = objectBS4.find('body')
+            tables = objectBS4.find_all('table')
 
-      nr_processo = obter_processo(body)
+            if len(tables) < 3:
+                print(f'Não foram encontradas tabelas para {processo}')
+                continue
 
-      dt_autuado = obter_dt_autuado(table1)
+            body = objectBS4.find('body')
 
-      envolvidos = []
-      
+            if body is None:
+                print(f'Página sem conteúdo para {processo}')
+                continue
 
-      for tr in table3.find_all('tr'):
+            nr_processo = obter_processo(body)
 
-          papel = obter_papel_envolvidos(tr)
+            nr_legado = obter_nr_legado(body)
 
-          nome = obter_nome_envolvidos(tr)
+            dt_autuado = obter_dt_autuado(tables[0])
 
-          if papel == "RELATOR":
+            table3 = tables[2]
 
-              nome = nome.split(':', 1)[1].strip()
+            envolvidos = []
 
-              envolvidos.append(nome)
+            for tr in table3.find_all('tr'):
 
-          else:
+                papel = obter_papel_envolvidos(tr)
+                nome = obter_nome_envolvidos(tr)
 
-              envolvidos.append({
-                  papel: nome
-              })
+                if not papel or not nome:
+                    continue
 
+                if papel == "RELATOR":
 
-      list_movimentacoes = []
+                    nome = nome.split(':', 1)[-1].strip(12)
+                    envolvidos.append(nome)
 
-      for table in tables[5:]:
-          
-          coTrs = table.find_all('tr')
-            
-          data = obter_data_movimentacoes(coTrs[0])
-          texto = ''
-          for tr in coTrs[1:]:
-            texto += obter_texto_movimentacoes(tr) + ' '
+                else:
 
-          if data != '':
-            list_movimentacoes.append({
-                'data': data.replace('Em ', ''),
-                'texto': texto
-            })
+                    envolvidos.append({
+                        papel: nome
+                    })
 
+            list_movimentacoes = []
 
-      dados_processo = {        
+            for table in tables[5:]:
 
-      'Processo': nr_processo,
-      'Data de autuação': dt_autuado,
-      'Envolvidos': envolvidos,
-      'Movimentações': list_movimentacoes
-      }
-      arquivo.write(
-         json.dumps(dados_processo, ensure_ascii=False) + '\n' # type: ignore
-      )
+                coTrs = table.find_all('tr')
+
+                if not coTrs:
+                    continue
+
+                data = obter_data_movimentacoes(coTrs[0])
+
+                texto = ''
+
+                for tr in coTrs[1:]:
+
+                    texto += obter_texto_movimentacoes(tr) + ' '
+
+                if data:
+
+                    list_movimentacoes.append({
+                        'data': data.replace('Em ', ''),
+                        'texto': texto.strip()
+                    })
+
+            dados_processo = {
+                'Processo': nr_processo,
+                "Número legado" : nr_legado,
+                'Data de autuação': dt_autuado,
+                'Envolvidos': envolvidos,
+                'Movimentações': list_movimentacoes
+            }
+
+            # Salvar os dados
+            arquivo.write(
+                json.dumps(dados_processo, ensure_ascii=False) + '\n'
+            )
+
+            arquivo.flush()
+
+            print(f'Processo salvo: {nr_processo}')
+
+        except requests.RequestException as erro:
+            print(f'Erro na consulta de {processo}: {erro}')
+
+        except Exception as erro:
+            print(f'Erro ao processar {processo}: {erro}')
+
+print('\nCrawler finalizado!')
